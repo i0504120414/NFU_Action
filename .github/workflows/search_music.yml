@@ -33,26 +33,7 @@ jobs:
           
       - name: Search YouTube
         run: |
-          echo "Searching YouTube for: ${{ github.event.inputs.query }}"
-          
-          # Search and get JSON results
-          yt-dlp \
-            --dump-json \
-            --flat-playlist \
-            --skip-download \
-            --no-warnings \
-            "ytsearch${{ github.event.inputs.limit }}:${{ github.event.inputs.query }}" \
-            > /tmp/search_results.json
-          
-          echo "Search completed!"
+          yt-dlp --dump-json --flat-playlist --skip-download --no-warnings "ytsearch${{ github.event.inputs.limit }}:${{ github.event.inputs.query }}" > /tmp/search_results.json
           
       - name: Parse and format results
-        run: |
-          python3 parse_search_results.py "${{ github.event.inputs.query }}"
-          
-      - name: Upload results as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: search-results
-          path: search_results.json
-          retention-days: 1
+        run: python3 parse_search_results.py "${{ github.event.inputs.query }}"
