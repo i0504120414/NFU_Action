@@ -48,144 +48,142 @@ jobs:
           SOURCE_TYPE: ${{ github.event.inputs.source_type }}
           FOLDER: ${{ github.event.inputs.folder }}
         run: |
-          python3 << 'PYTHON_SCRIPT'
-import os, re, sys, requests
-from urllib.parse import urlparse, unquote
-from bs4 import BeautifulSoup
+          cat > /tmp/download_script.py << 'EOF'
+          import os, re, sys, requests
+          from urllib.parse import urlparse, unquote
+          from bs4 import BeautifulSoup
 
-def sanitize_filename(name):
-    invalid_chars = '<>:"/\\|?*'
-    for char in invalid_chars:
-        name = name.replace(char, '_')
-    return name.strip()
+          def sanitize_filename(name):
+              invalid_chars = '<>:"/\\|?*'
+              for char in invalid_chars:
+                  name = name.replace(char, '_')
+              return name.strip()
 
-def get_filename_from_headers(response, url):
-    cd = response.headers.get('Content-Disposition', '')
-    if 'filename=' in cd:
-        match = re.search(r'filename=["\'']?([^"\'';]+)["\'']?', cd)
-        if match:
-            return unquote(match.group(1))
-    parsed = urlparse(url)
-    path = unquote(parsed.path)
-    if path and '/' in path:
-        filename = path.split('/')[-1]
-        if filename and '.' in filename:
-            return filename
-    return None
+          def get_filename_from_headers(response, url):
+              cd = response.headers.get('Content-Disposition', '')
+              if 'filename=' in cd:
+                  match = re.search(r'filename=["\']?([^"\';]+)["\']?', cd)
+                  if match:
+                      return unquote(match.group(1))
+              parsed = urlparse(url)
+              path = unquote(parsed.path)
+              if path and '/' in path:
+                  filename = path.split('/')[-1]
+                  if filename and '.' in filename:
+                      return filename
+              return None
 
-def download_direct(url, folder, custom_filename=None):
-    print(f"Downloading from: {url}")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-    response = requests.get(url, headers=headers, stream=True, allow_redirects=True, timeout=300)
-    response.raise_for_status()
-    
-    if custom_filename:
-        filename = sanitize_filename(custom_filename)
-    else:
-        filename = get_filename_from_headers(response, response.url)
-        if not filename:
-            filename = f"downloaded_file_{os.urandom(4).hex()}"
-    
-    filepath = os.path.join(folder, filename)
-    total_size = int(response.headers.get('content-length', 0))
-    downloaded = 0
-    
-    with open(filepath, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
-                downloaded += len(chunk)
-    
-    print(f"Downloaded: {filename} ({downloaded / 1024 / 1024:.2f} MB)")
-    return filepath
+          def download_direct(url, folder, custom_filename=None):
+              print(f"Downloading from: {url}")
+              headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
+              response = requests.get(url, headers=headers, stream=True, allow_redirects=True, timeout=300)
+              response.raise_for_status()
+              
+              if custom_filename:
+                  filename = sanitize_filename(custom_filename)
+              else:
+                  filename = get_filename_from_headers(response, response.url)
+                  if not filename:
+                      filename = f"downloaded_file_{os.urandom(4).hex()}"
+              
+              filepath = os.path.join(folder, filename)
+              with open(filepath, 'wb') as f:
+                  for chunk in response.iter_content(chunk_size=8192):
+                      if chunk:
+                          f.write(chunk)
+              
+              print(f"Downloaded: {filename}")
+              return filepath
 
-def download_jumbomail(url, folder, custom_filename=None):
-    print(f"Extracting JumboMail link from: {url}")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-    response = requests.get(url, headers=headers, timeout=30)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    download_link = None
-    for link in soup.find_all('a', href=True):
-        href = link.get('href', '')
-        if 'download' in href.lower() or 'getfile' in href.lower():
-            download_link = href
-            break
-    
-    if not download_link:
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            if any(ext in href.lower() for ext in ['.mp3', '.mp4', '.zip', '.pdf', '.doc']):
-                download_link = href
-                break
-    
-    if not download_link:
-        print("Could not find download link")
-        sys.exit(1)
-    
-    if download_link.startswith('/'):
-        parsed = urlparse(url)
-        download_link = f"{parsed.scheme}://{parsed.netloc}{download_link}"
-    
-    return download_direct(download_link, folder, custom_filename)
+          def download_jumbomail(url, folder, custom_filename=None):
+              print(f"Extracting JumboMail link from: {url}")
+              headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
+              response = requests.get(url, headers=headers, timeout=30)
+              response.raise_for_status()
+              soup = BeautifulSoup(response.text, 'html.parser')
+              
+              download_link = None
+              for link in soup.find_all('a', href=True):
+                  href = link.get('href', '')
+                  if 'download' in href.lower() or 'getfile' in href.lower():
+                      download_link = href
+                      break
+              
+              if not download_link:
+                  for link in soup.find_all('a', href=True):
+                      href = link.get('href', '')
+                      if any(ext in href.lower() for ext in ['.mp3', '.mp4', '.zip', '.pdf', '.doc']):
+                          download_link = href
+                          break
+              
+              if not download_link:
+                  print("Could not find download link")
+                  sys.exit(1)
+              
+              if download_link.startswith('/'):
+                  parsed = urlparse(url)
+                  download_link = f"{parsed.scheme}://{parsed.netloc}{download_link}"
+              
+              return download_direct(download_link, folder, custom_filename)
 
-def download_gdrive(url, folder, custom_filename=None):
-    print(f"Downloading from Google Drive: {url}")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-    
-    file_id = None
-    match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
-    if match:
-        file_id = match.group(1)
-    else:
-        match = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
-        if match:
-            file_id = match.group(1)
-    
-    if not file_id:
-        print(f"Could not extract file ID from URL: {url}")
-        sys.exit(1)
-    
-    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    session = requests.Session()
-    response = session.get(download_url, headers=headers, stream=True, timeout=30)
-    
-    if 'download_warning' in response.text or 'confirm=' in response.url:
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                download_url = f"{download_url}&confirm={value}"
-                break
-        response = session.get(download_url, headers=headers, stream=True, timeout=300)
-    
-    if custom_filename:
-        filename = sanitize_filename(custom_filename)
-    else:
-        filename = get_filename_from_headers(response, response.url)
-        if not filename or filename == 'uc':
-            filename = f"gdrive_{file_id}"
-    
-    filepath = os.path.join(folder, filename)
-    with open(filepath, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=32768):
-            if chunk:
-                f.write(chunk)
-    
-    print(f"Downloaded: {filename}")
-    return filepath
+          def download_gdrive(url, folder, custom_filename=None):
+              print(f"Downloading from Google Drive: {url}")
+              headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
+              
+              file_id = None
+              match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
+              if match:
+                  file_id = match.group(1)
+              else:
+                  match = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
+                  if match:
+                      file_id = match.group(1)
+              
+              if not file_id:
+                  print(f"Could not extract file ID from URL: {url}")
+                  sys.exit(1)
+              
+              download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+              session = requests.Session()
+              response = session.get(download_url, headers=headers, stream=True, timeout=30)
+              
+              if 'download_warning' in response.text or 'confirm=' in response.url:
+                  for key, value in response.cookies.items():
+                      if key.startswith('download_warning'):
+                          download_url = f"{download_url}&confirm={value}"
+                          break
+                  response = session.get(download_url, headers=headers, stream=True, timeout=300)
+              
+              if custom_filename:
+                  filename = sanitize_filename(custom_filename)
+              else:
+                  filename = get_filename_from_headers(response, response.url)
+                  if not filename or filename == 'uc':
+                      filename = f"gdrive_{file_id}"
+              
+              filepath = os.path.join(folder, filename)
+              with open(filepath, 'wb') as f:
+                  for chunk in response.iter_content(chunk_size=32768):
+                      if chunk:
+                          f.write(chunk)
+              
+              print(f"Downloaded: {filename}")
+              return filepath
 
-url = os.environ['FILE_URL']
-folder = os.environ['FOLDER']
-filename = os.environ.get('FILENAME', '') or None
-source_type = os.environ.get('SOURCE_TYPE', 'direct').lower()
+          if __name__ == '__main__':
+              url = os.environ['FILE_URL']
+              folder = os.environ['FOLDER']
+              filename = os.environ.get('FILENAME', '') or None
+              source_type = os.environ.get('SOURCE_TYPE', 'direct').lower()
 
-if source_type == 'jumbomail':
-    download_jumbomail(url, folder, filename)
-elif source_type == 'gdrive':
-    download_gdrive(url, folder, filename)
-else:
-    download_direct(url, folder, filename)
-PYTHON_SCRIPT
+              if source_type == 'jumbomail':
+                  download_jumbomail(url, folder, filename)
+              elif source_type == 'gdrive':
+                  download_gdrive(url, folder, filename)
+              else:
+                  download_direct(url, folder, filename)
+          EOF
+          python3 /tmp/download_script.py
 
       - name: List downloaded files
         run: find "${{ github.event.inputs.folder }}" -type f -exec ls -lh {} \;
