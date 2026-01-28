@@ -18,33 +18,34 @@ jobs:
     
     steps:
       - name: Search via System Tools
+        env:
+          QUERY: ${{ github.event.inputs.query }}
+          LIMIT: ${{ github.event.inputs.limit }}
         run: |
-          QUERY="${{ github.event.inputs.query }}"
-          LIMIT="${{ github.event.inputs.limit }}"
-          
-          ENCODED_QUERY=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$QUERY'''))")
+          ENCODED_QUERY=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ.get('QUERY', '')))")
           
           echo "Searching for: $QUERY"
           
           URL="https://itunes.apple.com/search?term=$ENCODED_QUERY&entity=podcast&limit=$LIMIT"
           curl -s "$URL" > /tmp/response.json
           
-          python3 -c "
-import sys, json, base64
-try:
-    with open('/tmp/response.json', 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    results = {'podcasts': data.get('results', [])}
-    count = len(results['podcasts'])
-    print(f'Found {count} results')
-    
-    json_str = json.dumps(results, ensure_ascii=False)
-    encoded = base64.b64encode(json_str.encode('utf-8')).decode('ascii')
-    
-    print('===RESULTS_START===')
-    print(encoded)
-    print('===RESULTS_END===')
-except Exception as e:
-    print(f'Error processing: {e}')
-    sys.exit(1)
-"
+          cat > /tmp/parse_results.py << 'EOF'
+          import sys, json, base64
+          try:
+              with open('/tmp/response.json', 'r', encoding='utf-8') as f:
+                  data = json.load(f)
+              results = {'podcasts': data.get('results', [])}
+              count = len(results['podcasts'])
+              print(f'Found {count} results')
+              
+              json_str = json.dumps(results, ensure_ascii=False)
+              encoded = base64.b64encode(json_str.encode('utf-8')).decode('ascii')
+              
+              print('===RESULTS_START===')
+              print(encoded)
+              print('===RESULTS_END===')
+          except Exception as e:
+              print(f'Error processing: {e}')
+              sys.exit(1)
+          EOF
+          python3 /tmp/parse_results.py
