@@ -4,3 +4,4 @@ PyGithub
 feedparser
 mutagen
 yt-dlp
+beautifulsoup4
