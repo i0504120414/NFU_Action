@@ -97,39 +97,122 @@ jobs:
 
           def download_jumbomail(url, folder, custom_filename=None):
               print(f"Extracting JumboMail link from: {url}")
-              headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
-              response = requests.get(url, headers=headers, timeout=30)
+              headers = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                  'Accept-Language': 'en-US,en;q=0.5'
+              }
+              
+              session = requests.Session()
+              response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
               response.raise_for_status()
-              soup = BeautifulSoup(response.text, 'html.parser')
+              html = response.text
+              soup = BeautifulSoup(html, 'html.parser')
               
               download_link = None
+              file_title = None
+              
+              # Method 1: Look for download button/link with various patterns
+              download_patterns = ['download', 'getfile', 'Download', 'DOWNLOAD', 'dl=', 'file=']
               for link in soup.find_all('a', href=True):
                   href = link.get('href', '')
-                  if 'download' in href.lower() or 'getfile' in href.lower():
+                  if any(p in href for p in download_patterns):
                       download_link = href
+                      file_title = link.get_text(strip=True) or link.get('title', '')
+                      print(f"Found download link via pattern: {href[:100]}")
                       break
               
+              # Method 2: Look for file extension links
               if not download_link:
+                  file_exts = ['.mp3', '.mp4', '.zip', '.pdf', '.doc', '.xlsx', '.rar', '.7z', '.wav', '.flac', '.m4a']
                   for link in soup.find_all('a', href=True):
                       href = link.get('href', '')
-                      if any(ext in href.lower() for ext in ['.mp3', '.mp4', '.zip', '.pdf', '.doc']):
+                      if any(ext in href.lower() for ext in file_exts):
                           download_link = href
+                          file_title = link.get_text(strip=True)
+                          print(f"Found file link via extension: {href[:100]}")
                           break
               
+              # Method 3: Look for onclick handlers with download URLs
               if not download_link:
-                  print("Could not find download link")
+                  for elem in soup.find_all(onclick=True):
+                      onclick = elem.get('onclick', '')
+                      urls = re.findall(r"https?://[^'"\s]+", onclick)
+                      for u in urls:
+                          if any(p in u for p in download_patterns + ['.mp3', '.zip', '.pdf']):
+                              download_link = u
+                              print(f"Found link in onclick: {u[:100]}")
+                              break
+                      if download_link:
+                          break
+              
+              # Method 4: Look for URLs in JavaScript
+              if not download_link:
+                  script_urls = re.findall(r'["\'](https?://[^"\'s]+(?:download|file|getfile|dl)[^"\'s]*)["\'"]', html)
+                  if script_urls:
+                      download_link = script_urls[0]
+                      print(f"Found link in script: {download_link[:100]}")
+              
+              # Method 5: Look for data attributes
+              if not download_link:
+                  for elem in soup.find_all(attrs={'data-url': True}):
+                      download_link = elem.get('data-url')
+                      print(f"Found data-url: {download_link[:100]}")
+                      break
+                  for elem in soup.find_all(attrs={'data-href': True}):
+                      download_link = elem.get('data-href')
+                      print(f"Found data-href: {download_link[:100]}")
+                      break
+              
+              # Method 6: JumboMail specific - check for API endpoints
+              if not download_link:
+                  # Extract gallery ID from URL and try direct download
+                  match = re.search(r'/gallery/([A-Za-z0-9]+)', url)
+                  if match:
+                      gallery_id = match.group(1)
+                      # Try common JumboMail download patterns
+                      test_urls = [
+                          f"https://www.jumbomail.me/api/download/{gallery_id}",
+                          f"https://www.jumbomail.me/download/{gallery_id}",
+                          f"https://www.jumbomail.me/en/download/{gallery_id}",
+                          f"https://www.jumbomail.me/api/gallery/{gallery_id}/download",
+                      ]
+                      for test_url in test_urls:
+                          try:
+                              test_resp = session.head(test_url, headers=headers, timeout=10, allow_redirects=True)
+                              if test_resp.status_code == 200:
+                                  download_link = test_url
+                                  print(f"Found working endpoint: {test_url}")
+                                  break
+                          except:
+                              continue
+              
+              if not download_link:
+                  print("Could not find download link. Page content preview:")
+                  print(html[:2000])
+                  print("\n\nAll links found:")
+                  for link in soup.find_all('a', href=True)[:20]:
+                      print(f"  {link.get('href', '')[:100]}")
                   sys.exit(1)
               
+              # Make URL absolute
               if download_link.startswith('/'):
                   parsed = urlparse(url)
                   download_link = f"{parsed.scheme}://{parsed.netloc}{download_link}"
+              elif not download_link.startswith('http'):
+                  parsed = urlparse(url)
+                  download_link = f"{parsed.scheme}://{parsed.netloc}/{download_link}"
               
-              return download_direct(download_link, folder, custom_filename)
+              return download_direct(download_link, folder, custom_filename or file_title)
 
           def download_gdrive(url, folder, custom_filename=None):
               print(f"Downloading from Google Drive: {url}")
-              headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}
+              headers = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+              }
               
+              # Extract file ID from URL
               file_id = None
               match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
               if match:
@@ -143,31 +226,121 @@ jobs:
                   print(f"Could not extract file ID from URL: {url}")
                   sys.exit(1)
               
-              download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-              session = requests.Session()
-              response = session.get(download_url, headers=headers, stream=True, timeout=30)
+              print(f"File ID: {file_id}")
               
-              if 'download_warning' in response.text or 'confirm=' in response.url:
+              session = requests.Session()
+              
+              # Try direct download first
+              download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+              response = session.get(download_url, headers=headers, timeout=30, allow_redirects=True)
+              
+              # Check if we got virus scan warning page
+              if 'virus scan warning' in response.text.lower() or 'download-form' in response.text:
+                  print("Got virus scan warning page, parsing form...")
+                  soup = BeautifulSoup(response.text, 'html.parser')
+                  
+                  # Find the download form
+                  form = soup.find('form', id='download-form')
+                  if form:
+                      action_url = form.get('action', '')
+                      if not action_url.startswith('http'):
+                          action_url = 'https://drive.usercontent.google.com/download'
+                      
+                      # Get all hidden inputs
+                      form_data = {}
+                      for inp in form.find_all('input', type='hidden'):
+                          name = inp.get('name')
+                          value = inp.get('value', '')
+                          if name:
+                              form_data[name] = value
+                              print(f"  Form field: {name}={value[:50]}")
+                      
+                      # Submit the form
+                      print(f"Submitting to: {action_url}")
+                      response = session.get(action_url, params=form_data, headers=headers, stream=True, timeout=300, allow_redirects=True)
+                  
+                  # Also try extracting filename from the warning page
+                  if not custom_filename:
+                      name_link = soup.find('a', class_='uc-name-size') or soup.select_one('.uc-name-size a')
+                      if name_link:
+                          custom_filename = name_link.get_text(strip=True)
+                          print(f"Found filename from page: {custom_filename}")
+              
+              # Handle download_warning cookie method (older method)
+              elif 'download_warning' in str(response.cookies) or 'confirm=' in response.url:
+                  print("Handling download warning via cookie...")
+                  confirm_token = None
                   for key, value in response.cookies.items():
                       if key.startswith('download_warning'):
-                          download_url = f"{download_url}&confirm={value}"
+                          confirm_token = value
                           break
-                  response = session.get(download_url, headers=headers, stream=True, timeout=300)
+                  
+                  if not confirm_token:
+                      # Try to find in page content
+                      match = re.search(r'confirm=([0-9A-Za-z_-]+)', response.text)
+                      if match:
+                          confirm_token = match.group(1)
+                  
+                  if confirm_token:
+                      download_url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm_token}"
+                      response = session.get(download_url, headers=headers, stream=True, timeout=300, allow_redirects=True)
               
+              # Check if we actually got a file
+              content_type = response.headers.get('Content-Type', '')
+              if 'text/html' in content_type:
+                  print("Warning: Got HTML instead of file, trying alternate method...")
+                  # Try the new usercontent domain directly
+                  alt_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+                  response = session.get(alt_url, headers=headers, stream=True, timeout=300, allow_redirects=True)
+              
+              response.raise_for_status()
+              
+              # Determine filename
               if custom_filename:
                   filename = sanitize_filename(custom_filename)
               else:
                   filename = get_filename_from_headers(response, response.url)
-                  if not filename or filename == 'uc':
-                      filename = f"gdrive_{file_id}"
+                  if not filename or filename in ['uc', 'download']:
+                      # Try to get from Content-Disposition
+                      cd = response.headers.get('Content-Disposition', '')
+                      if 'filename*=' in cd:
+                          match = re.search(r"filename\*=UTF-8''(.+)", cd)
+                          if match:
+                              filename = unquote(match.group(1))
+                      if not filename or filename in ['uc', 'download']:
+                          filename = f"gdrive_{file_id}"
+              
+              # Add extension if missing
+              if '.' not in filename:
+                  content_type = response.headers.get('Content-Type', '')
+                  ext_map = {
+                      'video/mp4': '.mp4',
+                      'audio/mpeg': '.mp3',
+                      'audio/mp3': '.mp3',
+                      'application/zip': '.zip',
+                      'application/pdf': '.pdf',
+                  }
+                  for ct, ext in ext_map.items():
+                      if ct in content_type:
+                          filename += ext
+                          break
               
               filepath = os.path.join(folder, filename)
+              total_size = int(response.headers.get('content-length', 0))
+              downloaded = 0
+              
+              print(f"Saving to: {filename}")
               with open(filepath, 'wb') as f:
                   for chunk in response.iter_content(chunk_size=32768):
                       if chunk:
                           f.write(chunk)
+                          downloaded += len(chunk)
+                          if total_size > 0:
+                              pct = (downloaded / total_size) * 100
+                              if downloaded % (1024*1024) < 32768:  # Print every ~1MB
+                                  print(f"Progress: {pct:.1f}% ({downloaded // (1024*1024)}MB)")
               
-              print(f"Downloaded: {filename}")
+              print(f"Downloaded: {filename} ({downloaded / 1024 / 1024:.2f} MB)")
               return filepath
 
           if __name__ == '__main__':
