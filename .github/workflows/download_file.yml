@@ -137,10 +137,10 @@ jobs:
               if not download_link:
                   for elem in soup.find_all(onclick=True):
                       onclick = elem.get('onclick', '')
-                      urls = re.findall(r"https?://[^'"\s]+", onclick)
+                      urls = re.findall(r'https?://[^\s<>]+', onclick)
                       for u in urls:
                           if any(p in u for p in download_patterns + ['.mp3', '.zip', '.pdf']):
-                              download_link = u
+                              download_link = u.rstrip("'").rstrip('"')
                               print(f"Found link in onclick: {u[:100]}")
                               break
                       if download_link:
@@ -148,7 +148,7 @@ jobs:
               
               # Method 4: Look for URLs in JavaScript
               if not download_link:
-                  script_urls = re.findall(r'["\'](https?://[^"\'s]+(?:download|file|getfile|dl)[^"\'s]*)["\'"]', html)
+                  script_urls = re.findall(r'https?://[^\s<>"]+(?:download|file|getfile|dl)[^\s<>"]*', html)
                   if script_urls:
                       download_link = script_urls[0]
                       print(f"Found link in script: {download_link[:100]}")
